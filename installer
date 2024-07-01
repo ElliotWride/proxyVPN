@@ -1,193 +1,117 @@
-# Variables
-$openvpnInstallerUrl = "https://swupdate.openvpn.org/community/releases/OpenVPN-2.6.11-I002-amd64.msi"
-$easyRsaUrl = "https://github.com/OpenVPN/easy-rsa/releases/download/v3.1.7/EasyRSA-3.1.7-win64.zip"
+# Installer Script: VpnInstaller.ps1
+
+# Define paths
 $openvpnDir = "C:\Program Files\OpenVPN"
-$easyRsaDir = Join-Path -Path $openvpnDir -ChildPath "EasyRSA-3.1.7"
-$serverName = "server"
-$clientName = "client1"
-$easyRsaBat = Join-Path -Path $easyRsaDir -ChildPath "EasyRSA-Start.bat"
-$easyRsaScriptPath = Join-Path -Path $easyRsaDir -ChildPath "easyrsa"
+$openvpnDownloadUrl = "https://swupdate.openvpn.org/community/releases/openvpn-install-2.5.3-I601-amd64.msi"
+$openvpnInstallerPath = Join-Path -Path $env:TEMP -ChildPath "openvpn-install.msi"
+$easyRsaVersion = "3.1.7"
+$easyRsaZipUrl = "https://github.com/OpenVPN/easy-rsa/releases/download/v$easyRsaVersion/EasyRSA-$easyRsaVersion.tgz"
+$easyRsaZipPath = Join-Path -Path $openvpnDir -ChildPath "EasyRSA-$easyRsaVersion.tgz"
+$easyRsaExtractPath = Join-Path -Path $openvpnDir -ChildPath "EasyRSA-$easyRsaVersion"
 
-# Function to execute EasyRSA commands using EasyRSA-Start.bat
-function Execute-EasyRSACommand {
-    param(
-        [string]$command
-    )
-    
-    $commandToExecute = ""$easyRsaBat" $command"
-    Write-Host "Executing EasyRSA command: $command"
-    
-    try {
-        & cmd.exe /c "cd "$easyRsaDir" && call "$easyRsaBat" $command"
-    } catch {
-        Write-Error "Failed to execute EasyRSA command: $command"
-    }
-}
-
-# Function to get public IP address
-function Get-PublicIpAddress {
-    try {
-        $ipAddress = Invoke-RestMethod -Uri "https://api.ipify.org?format=text"
-        return $ipAddress
-    } catch {
-        Write-Warning "Failed to retrieve public IP address. Please set it manually."
-        return $null
-    }
-}
-
-# Function to run commands in EasyRSA shell
-function Run-EasyRSACommands {
+# Function to download a file
+function Download-File {
     param (
-        [string[]]$commands
+        [string]$url,
+        [string]$output
     )
-    
-    # Start EasyRSA shell and execute commands
-    $EasyRSACommands = $commands | ForEach-Object { "echo $_"; Start-Sleep -Milliseconds 100; }
-    $EasyRSACommands | Out-File -FilePath "$env:TEMP\EasyRSACommands.txt" -Encoding ascii
-    Start-Process cmd.exe -ArgumentList "/c "$easyRsaBat" < "$env:TEMP\EasyRSACommands.txt"" -Wait
-    Start-Sleep -Seconds 5  # Wait for EasyRSA commands to complete (adjust if needed)
+    $webClient = New-Object System.Net.WebClient
+    $webClient.DownloadFile($url, $output)
 }
 
-# Check if OpenVPN is already installed
-if (!(Get-Command -Name "openvpn" -ErrorAction SilentlyContinue)) {
-    Write-Host "Downloading OpenVPN installer..."
-    $openvpnInstallerPath = "$env:TEMP\openvpn-install.msi"
-    try {
-        Invoke-WebRequest -Uri $openvpnInstallerUrl -OutFile $openvpnInstallerPath
-        Write-Host "Installing OpenVPN..."
-        Start-Process msiexec.exe -ArgumentList "/i "$openvpnInstallerPath" /quiet /norestart" -Wait
-    } catch {
-        Write-Error "Failed to download or install OpenVPN."
+# Function to extract a tgz file
+function Extract-Tgz {
+    param (
+        [string]$tgzPath,
+        [string]$extractPath
+    )
+    Add-Type -AssemblyName System.IO.Compression.FileSystem
+    $gzipStream = [System.IO.Compression.GzipStream]::new([System.IO.File]::OpenRead($tgzPath), [System.IO.Compression.CompressionMode]::Decompress)
+    $tarPath = [System.IO.Path]::ChangeExtension($tgzPath, ".tar")
+    $tarStream = [System.IO.File]::Create($tarPath)
+    $buffer = New-Object byte[] 4096
+    while (($count = $gzipStream.Read($buffer, 0, $buffer.Length)) -gt 0) {
+        $tarStream.Write($buffer, 0, $count)
     }
-} else {
-    Write-Host "OpenVPN is already installed."
+    $tarStream.Close()
+    $gzipStream.Close()
+
+    tar -xf $tarPath -C $extractPath
+    Remove-Item $tarPath
 }
 
-# Download and extract EasyRSA
-Write-Host "Downloading EasyRSA..."
-$easyRsaZipPath = "$env:TEMP\EasyRSA.zip"
+# Function to check if a program is installed
+function Test-ProgramInstalled {
+    param (
+        [string]$programName
+    )
+    $installed = Get-WmiObject -Class Win32_Product | Where-Object { $_.Name -eq $programName }
+    return $installed -ne $null
+}
+
+# Function to generate OpenVPN files using EasyRSA
+function Generate-OpenVPNFiles {
+    Write-Output "Generating required OpenVPN files using EasyRSA..."
+
+    # Change directory to EasyRSA and execute EasyRSA-Start.bat
+    $easyRsaBat = Join-Path -Path $easyRsaExtractPath -ChildPath "EasyRSA-Start.bat"
+    & cmd.exe /c "cd `"$easyRsaExtractPath`" && call `"$easyRsaBat`""
+
+    # Verify if files are generated and move them to the OpenVPN directory
+    $generatedFiles = @("ca.crt", "server.crt", "server.key", "dh.pem", "ta.key")
+    foreach ($file in $generatedFiles) {
+        $sourceFile = Join-Path -Path $easyRsaExtractPath -ChildPath "pki\$file"
+        $destinationFile = Join-Path -Path $openvpnDir -ChildPath $file
+        
+        if (!(Test-Path -Path $sourceFile -PathType Leaf)) {
+            Write-Error "Failed to find generated file $file in $sourceFile"
+            return $false
+        }
+
+        Move-Item -Path $sourceFile -Destination $destinationFile -Force -ErrorAction Stop
+    }
+
+    Write-Output "Files generated and moved to $openvpnDir directory."
+    return $true
+}
+
+# Main script execution
 try {
-    Invoke-WebRequest -Uri $easyRsaUrl -OutFile $easyRsaZipPath
-    Write-Host "Extracting EasyRSA..."
-    Expand-Archive -Path $easyRsaZipPath -DestinationPath $openvpnDir -Force
-} catch {
-    Write-Error "Failed to download or extract EasyRSA."
-}
+    # Ensure OpenVPN directory exists
+    if (!(Test-Path -Path $openvpnDir -PathType Container)) {
+        New-Item -Path $openvpnDir -ItemType Directory -Force
+    }
 
-# Execute EasyRSA commands
-$easyRSACommands = @( 
-    "init-pki", 
-    "build-ca nopass", 
-    "gen-req $serverName nopass", 
-    "sign-req server $serverName", 
-    "gen-req $clientName nopass", 
-    "sign-req client $clientName", 
-    "gen-dh" 
-)
-
-# Change directory to EasyRSA directory
-Set-Location -Path $easyRsaDir
-
-# Execute each command using EasyRSA-Start.bat
-Run-EasyRSACommands -commands $easyRSACommands
-
-# After EasyRSA commands, continue with remaining setup
-# Enable IP forwarding
-Write-Host "Enabling IP forwarding..."
-try {
-    Set-ItemProperty -Path "HKLM:\SYSTEM\CurrentControlSet\Services\Tcpip\Parameters" -Name "IPEnableRouter" -Value 1
-} catch {
-    Write-Error "Failed to enable IP forwarding."
-}
-
-# Set up firewall rules
-Write-Host "Setting up firewall rules..."
-try {
-    netsh advfirewall firewall add rule name="OpenVPN" dir=in action=allow protocol=UDP localport=1194
-} catch {
-    Write-Error "Failed to add firewall rule for OpenVPN."
-}
-
-# Start OpenVPN service
-Write-Host "Starting OpenVPN service..."
-try {
-    Start-Service OpenVPNService
-    Set-Service OpenVPNService -StartupType Automatic
-} catch {
-    Write-Error "Failed to start OpenVPN service."
-}
-
-# Generate server configuration file
-$serverConfigPath = "$openvpnDir\config\server.ovpn"
-if (Test-Path "$openvpnDir\config\ca.crt" -and Test-Path "$openvpnDir\config\server.crt" -and Test-Path "$openvpnDir\config\server.key" -and Test-Path "$openvpnDir\config\dh.pem" -and Test-Path "$openvpnDir\config\ta.key") {
-    @"
-    port 1194
-    proto udp
-    dev tun
-    ca "$openvpnDir\config\ca.crt"
-    cert "$openvpnDir\config\server.crt"
-    key "$openvpnDir\config\server.key"
-    dh "$openvpnDir\config\dh.pem"
-    auth SHA512
-    tls-auth "$openvpnDir\config\ta.key" 0
-    topology subnet
-    server 10.8.0.0 255.255.255.0
-    ifconfig-pool-persist "$openvpnDir\config\ipp.txt"
-    push "redirect-gateway def1 bypass-dhcp"
-    push "dhcp-option DNS 8.8.8.8"
-    push "dhcp-option DNS 8.8.4.4"
-    keepalive 10 120
-    cipher AES-256-CBC
-    user nobody
-    group nogroup
-    persist-key
-    persist-tun
-    status "$openvpnDir\config\openvpn-status.log"
-    verb 3
-    explicit-exit-notify 1
-"@ | Out-File -FilePath $serverConfigPath -Encoding ascii
-} else {
-    Write-Error "Required files for server configuration are missing."
-}
-
-# Get public IP address of the server
-$serverIP = Get-PublicIpAddress
-
-# Generate client configuration file
-if ($serverIP) {
-    Write-Host "Generating client configuration file..."
-    if (Test-Path "$openvpnDir\config\ca.crt" -and Test-Path "$openvpnDir\config\$clientName.crt" -and Test-Path "$openvpnDir\config\$clientName.key" -and Test-Path "$openvpnDir\config\ta.key") {
-        $clientConfigPath = "$env:USERPROFILE\$clientName.ovpn"
-        @"
-        client
-        dev tun
-        proto udp
-        remote $serverIP 1194
-        resolv-retry infinite
-        nobind
-        persist-key
-        persist-tun
-        remote-cert-tls server
-        auth SHA512
-        cipher AES-256-CBC
-        key-direction 1
-        <ca>
-        $(Get-Content "$openvpnDir\config\ca.crt")
-        </ca>
-        <cert>
-        $(Get-Content "$openvpnDir\config\$clientName.crt")
-        </cert>
-        <key>
-        $(Get-Content "$openvpnDir\config\$clientName.key")
-        </key>
-        <tls-auth>
-        $(Get-Content "$openvpnDir\config\ta.key")
-        </tls-auth>
-"@ | Out-File -FilePath $clientConfigPath -Encoding ascii
-        Write-Host "VPN setup completed successfully!"
+    # Check if OpenVPN is installed, if not, download and install it
+    if (-not (Test-ProgramInstalled -programName "OpenVPN")) {
+        Write-Output "Downloading and installing OpenVPN..."
+        Download-File -url $openvpnDownloadUrl -output $openvpnInstallerPath
+        Start-Process msiexec.exe -ArgumentList "/i `"$openvpnInstallerPath`" /quiet /norestart" -Wait
+        Write-Output "OpenVPN installed successfully."
     } else {
-        Write-Error "Required files for client configuration are missing."
+        Write-Output "OpenVPN is already installed. Skipping download and installation."
     }
-} else {
-    Write-Warning "Failed to retrieve server IP address. Please check network connectivity and set the client configuration file manually."
+
+    # Download EasyRSA
+    Write-Output "Downloading EasyRSA..."
+    Download-File -url $easyRsaZipUrl -output $easyRsaZipPath
+
+    # Extract EasyRSA
+    Write-Output "Extracting EasyRSA..."
+    if (!(Test-Path -Path $easyRsaExtractPath -PathType Container)) {
+        New-Item -Path $easyRsaExtractPath -ItemType Directory -Force
+    }
+    Extract-Tgz -tgzPath $easyRsaZipPath -extractPath $openvpnDir
+
+    # Generate OpenVPN files
+    $generateSuccess = Generate-OpenVPNFiles
+
+    if ($generateSuccess) {
+        Write-Output "OpenVPN setup completed successfully."
+    } else {
+        Write-Error "Failed to generate or move one or more required files. Please check and re-run the script."
+    }
+} catch {
+    Write-Error $_.Exception.Message
+    exit 1
 }
