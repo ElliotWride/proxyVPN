@@ -191,37 +191,3 @@ if ($serverIP) {
 } else {
     Write-Warning "Failed to retrieve server IP address. Please check network connectivity and set the client configuration file manually."
 }
-
-PS C:\Users\ellio> .\VpnInstaller.ps1
-Downloading OpenVPN installer...
-Installing OpenVPN...
-Downloading EasyRSA...
-Extracting EasyRSA...
-Enabling IP forwarding...
-Setting up firewall rules...
-Ok.
-
-Starting OpenVPN service...
-Start-Service : Service 'OpenVPNService (OpenVPNService)' cannot be started due to the following error: Cannot start
-service OpenVPNService on computer '.'.
-At C:\Users\ellio\VpnInstaller.ps1:114 char:5
-+     Start-Service OpenVPNService
-+     ~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-    + CategoryInfo          : OpenError: (System.ServiceProcess.ServiceController:ServiceController) [Start-Service],
-   ServiceCommandException
-    + FullyQualifiedErrorId : CouldNotStartService,Microsoft.PowerShell.Commands.StartServiceCommand
-
-Test-Path : A parameter cannot be found that matches parameter name 'and'.
-At C:\Users\ellio\VpnInstaller.ps1:122 char:43
-+ if (Test-Path "$openvpnDir\config\ca.crt" -and Test-Path "$openvpnDir ...
-+                                           ~~~~
-    + CategoryInfo          : InvalidArgument: (:) [Test-Path], ParameterBindingException
-    + FullyQualifiedErrorId : NamedParameterNotFound,Microsoft.PowerShell.Commands.TestPathCommand
-
-Generating client configuration file...
-Test-Path : A parameter cannot be found that matches parameter name 'and'.
-At C:\Users\ellio\VpnInstaller.ps1:159 char:47
-+     if (Test-Path "$openvpnDir\config\ca.crt" -and Test-Path "$openvp ...
-+                                               ~~~~
-    + CategoryInfo          : InvalidArgument: (:) [Test-Path], ParameterBindingException
-    + FullyQualifiedErrorId : NamedParameterNotFound,Microsoft.PowerShell.Commands.TestPathCommand
